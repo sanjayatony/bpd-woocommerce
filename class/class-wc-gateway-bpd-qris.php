@@ -97,6 +97,16 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 				'description' => __( 'Enter your Terminal.', 'woocommerce' ),
 				'default'     => '',
 			),
+			'jenis_transaksi'         => array(
+				'title'   => __( 'Jenis Transaksi', 'woocommerce' ),
+				'type'    => 'text',
+				'default' => '',
+			),
+			'keterangan'              => array(
+				'title'   => __( 'Keterangan', 'woocommerce' ),
+				'type'    => 'text',
+				'default' => '',
+			),
 			'environment'             => array(
 				'title'       => __( 'Environment', 'woocommerce' ),
 				'type'        => 'select',
@@ -197,9 +207,9 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 			'tagihan'   => round( $order->get_total(), 0 ),
 			'instansi'  => $this->merchant_code,
 			'ket_1_val' => $order->get_billing_address_1(),
-			'ket_2_val' => 'COCO ONLINE',
+			'ket_2_val' => $this->jenis_transaksi,
 			'ket_3_val' => $order->billing_phone,
-			'ket_4_val' => 'Transaksi COCO Online',
+			'ket_4_val' => $this->keterangan,
 			'ket_5_val' => round( $order->get_total(), 0 ),
 		);
 		$logger = wc_get_logger();
