@@ -48,6 +48,7 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		// Actions.
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'admin_print_scripts-woocommerce_page_wc-settings', array( &$this, 'bpd_admin_scripts' ) );
+		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 
 		// Customer emails.
 	}
@@ -220,5 +221,21 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		$response = $client->__soapCall( 'ws_tagihan_insert', $args );
 		$logger->log( 'INSERT RESPONSE', wc_print_r( $response, true ) );
 		return json_decode( $response );
+	}
+
+	/**
+	 * Output for the order received page.
+	 *
+	 * @param int $order_id.
+	 */
+	public function thankyou_page( $order_id ) {
+		$payment_code = get_post_meta( $order_id, '_recordId', true );
+		echo '<div style="text-align:center">';
+		if ( $this->instructions ) {
+			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
+		}
+		echo '<strong>' . esc_html( $payment_code ) . '</strong>';
+		echo '</div>';
+
 	}
 }
