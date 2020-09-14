@@ -164,9 +164,9 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 			// Update order status.
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 			// Update order note with payment code.
-			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $response->recordId . '</b>' );
+			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $response->data[0]->recordId . '</b>' );
 			// Save recordId in post meta.
-			add_post_meta( $order_id, '_recordId', $response->recordId, true );
+			add_post_meta( $order_id, '_recordId', $response->data[0]->recordId, true );
 
 			return array(
 				'result'   => 'success',
