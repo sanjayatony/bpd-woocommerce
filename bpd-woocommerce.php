@@ -10,15 +10,15 @@
  * Init.
  */
 function bpd_gateway_init() {
-	include 'class/class.bpd-gateway-qris.php';
+	include 'class/class-wc-gateway-bpd-qris.php';
 }
 add_action( 'plugins_loaded', 'bpd_gateway_init' );
 
 /**
  * Add method to WooCommerce
  */
-function add_bpd_payment_gateway( $methods ) {
+function add_bpd_qris_payment_gateway( $methods ) {
 	$methods[] = 'WC_Gateway_Bpd_Qris';
 	return $methods;
 }
-add_filter( 'woocommerce_payment_gateways', 'add_bpd_payment_gateway' );
+add_filter( 'woocommerce_payment_gateways', 'add_bpd_qris_payment_gateway' );
