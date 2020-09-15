@@ -17,8 +17,8 @@ add_action( 'plugins_loaded', 'bpd_gateway_init' );
 /**
  * Add method to WooCommerce
  */
-function add_bpd_qris_payment_gateway( $methods ) {
-	$methods[] = 'WC_Gateway_Bpd_Qris';
+function add_bpd_va_qris_payment_gateway( $methods ) {
+	$methods[] = 'WC_Gateway_BPD_VA_QRIS';
 	return $methods;
 }
-add_filter( 'woocommerce_payment_gateways', 'add_bpd_qris_payment_gateway' );
+add_filter( 'woocommerce_payment_gateways', 'add_bpd_va_qris_payment_gateway' );
