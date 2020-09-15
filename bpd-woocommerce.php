@@ -10,7 +10,7 @@
  * Init.
  */
 function bpd_gateway_init() {
-	include 'class/class-wc-gateway-bpd-qris.php';
+	include 'class/class-wc-gateway-bpd-va-qris.php';
 }
 add_action( 'plugins_loaded', 'bpd_gateway_init' );
 
