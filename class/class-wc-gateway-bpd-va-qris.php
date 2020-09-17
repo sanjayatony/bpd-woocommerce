@@ -1,6 +1,6 @@
 <?php
 /**
- * Class WC_Gateway_BPD_QRIS
+ * Class WC_Gateway_BPD_VA_QRIS
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -9,7 +9,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * BPD QRIS
  *
- * @class WC_Gateway_BPD_QRIS
+ * @class WC_Gateway_BPD_VA_QRIS
  * @extends WC_Payment_Gateway
  */
 class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
@@ -208,12 +208,14 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$logger->log( 'response generate', wc_print_r( $response, true ) );
 
 		if ( '00' === $response->code ) {
+			// Get QR string
+			$qris_string = $this->generate_qris( $order_id, $response->data[0]->recordId );
 			// Update order status.
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 			// Update order note with payment code.
-			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $response->data[0]->recordId . '</b>' );
+			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $qris_string . '</b>' );
 			// Save recordId in post meta.
-			add_post_meta( $order_id, '_record_id', $response->data[0]->recordId, true );
+			add_post_meta( $order_id, '_qris_string', $qris_string, true );
 
 			return array(
 				'result'   => 'success',
@@ -256,6 +258,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$client   = new SoapClient( $this->api_soap_endpoint );
 		$response = $client->__soapCall( 'ws_tagihan_insert', $args );
 		$logger->log( 'INSERT RESPONSE', wc_print_r( $response, true ) );
+
 		return json_decode( $response );
 	}
 
@@ -265,12 +268,12 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 * @param int $order_id.
 	 */
 	public function thankyou_page( $order_id ) {
-		$payment_code = get_post_meta( $order_id, '_record_id', true );
+		$qris_string = get_post_meta( $order_id, '_qris_string', true );
 		echo '<div style="text-align:center">';
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
 		}
-		echo '<strong>' . esc_html( $payment_code ) . '</strong>';
+		echo '<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=' . $qris_string . '" style="margin:0 auto" />';
 		echo '</div>';
 
 	}
@@ -280,7 +283,35 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 *
 	 * @param int $order_id, $record_id
 	 */
-	public function generate_qris( $order_id ) {
+	public function generate_qris( $order_id, $record_id ) {
+		$variables = $this->merchant_id . $this->terminal . $this->instansi . $order_id . $this->merchant_key;
+		$hashing   = hash( 'sha256', $variables );
 
+		$data   = array(
+			'merchantPan'  => $this->merchant_id,
+			'terminalUser' => $this->terminal,
+			'productCode'  => $this->instansi,
+			'hashcodeKey'  => $hashing,
+			'billNumber'   => (string) $order_id,
+			'recordId'     => $record_id,
+		);
+		$data   = wp_json_encode( $data );
+		$logger = wc_get_logger();
+		$logger->log( 'DATA TO GENERATE', wc_print_r( $data, true ) );
+
+		$options = array(
+			'body'        => $data,
+			'headers'     => array(
+				'Content-Type' => 'application/json',
+			),
+			'data_format' => 'body',
+		);
+
+		$response = wp_remote_post( $this->api_qris_endpoint, $options );
+		$response = wp_remote_retrieve_body( $response );
+
+		$data = json_decode( $response );
+		$logger->log( 'QRIS RESPONSE', $data->qrValue, true );
+		return $data->qrValue;
 	}
 }
