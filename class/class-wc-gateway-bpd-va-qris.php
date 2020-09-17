@@ -209,13 +209,14 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 
 		if ( '00' === $response->code ) {
 			// Get QR string
-			$qris_string = $this->generate_qris( $order_id, $response->data[0]->recordId );
+			$qris = $this->generate_qris( $order_id, $response->data[0]->recordId );
 			// Update order status.
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 			// Update order note with payment code.
 			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $qris_string . '</b>' );
-			// Save recordId in post meta.
-			add_post_meta( $order_id, '_qris_string', $qris_string, true );
+			// Save qr_string and expired date in post meta.
+			add_post_meta( $order_id, '_qris_string', $qris->qrValue, true );
+			add_post_meta( $order_id, '_qris_expired', $qris->expiredDate, true );
 
 			return array(
 				'result'   => 'success',
@@ -268,12 +269,18 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 * @param int $order_id.
 	 */
 	public function thankyou_page( $order_id ) {
-		$qris_string = get_post_meta( $order_id, '_qris_string', true );
+		global $woocommerce;
+		$order = new WC_Order( $order_id );
+
+		$qris_string  = get_post_meta( $order_id, '_qris_string', true );
+		$qris_expired = get_post_meta( $order_id, '_qris_expired', true );
 		echo '<div style="text-align:center">';
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
 		}
 		echo '<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=' . $qris_string . '" style="margin:0 auto" />';
+		echo '<h3>' . wc_price( $order->get_total() ) . '</h3>';
+		echo 'Bayar sebelum: ' . $qris_expired;
 		echo '</div>';
 
 	}
@@ -311,7 +318,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$response = wp_remote_retrieve_body( $response );
 
 		$data = json_decode( $response );
-		$logger->log( 'QRIS RESPONSE', $data->qrValue, true );
-		return $data->qrValue;
+		$logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
+		return $data;
 	}
 }
