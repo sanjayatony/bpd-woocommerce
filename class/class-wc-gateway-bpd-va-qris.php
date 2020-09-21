@@ -43,6 +43,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 			$this->merchant_id       = $this->get_option( 'merchant_id_sandbox' );
 			$this->merchant_key      = $this->get_option( 'merchant_key_sandbox' );
 			$this->api_qris_endpoint = 'http://36.75.213.124:7070/merchant-admin/rest/openapi/generateQrisPost';
+			$this->api_qris_status   = 'http://36.75.213.124:7070/merchant-admin/rest/openapi/getTrxByQrString';
 			$this->api_soap_endpoint = 'http://36.75.213.124:7070/ws_bpd_payment/interkoneksi/v1/ws_interkoneksi.php?wsdl';
 		} else {
 			$this->username          = $this->get_option( 'username_production' );
@@ -275,11 +276,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 * @param int $order_id.
 	 */
 	public function thankyou_page( $order_id ) {
-		global $woocommerce;
-		$order = new WC_Order( $order_id );
 
-		$qris_string  = get_post_meta( $order_id, '_qris_string', true );
-		$qris_expired = get_post_meta( $order_id, '_qris_expired', true );
 		echo '<div style="text-align:center">';
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
@@ -340,14 +337,62 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$nmid          = get_post_meta( $order_id, '_nmid', true );
 		$qris_string   = get_post_meta( $order_id, '_qris_string', true );
 		$qris_expired  = get_post_meta( $order_id, '_qris_expired', true );
+		?>
 
-		echo '<div style="text-align:center;margin-bottom:50px">';
-		echo '<strong>' . $merchant_name . '</strong><br/>';
-		echo '<strong>' . $nmid . '</strong><br/>';
-		echo '<strong>' . $this->terminal . '</strong>';
-		echo '<img src=https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=' . $qris_string . ' style="margin:0 auto" />';
-		echo '<h4>' . wc_price( $order->get_total() ) . '</h4>';
-		echo 'Expired: ' . $qris_expired;
+		<div style="text-align:center;margin-bottom:50px">
+			<strong><?php echo $merchant_name; ?></strong><br/>
+			<strong><?php echo $nmid; ?></strong><br/>
+			<strong><?php echo $this->terminal; ?></strong>
+			<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=<?php echo $qris_string; ?>" style="margin:0 auto" />
+			<h4><?php echo wc_price( $order->get_total() ); ?></h4>
+			Expired: <?php echo $qris_expired; ?><br />
+			Status: <span id="qris-status"><?php echo $this->qris_status( $order_id ); ?></span>
+
+			<div class="check-status-qris" style="margin-top:10px">
+				<button id="check-qris-status">Check Status</button>
+			</div>
+		</div>
+		<?php
+
+	}
+
+	/**
+	 * GET QRIS Status
+	 *
+	 * @param int $order_id
+	 * @return string
+	 */
+	public function qris_status( $order_id ) {
+		global $woocommerce;
+		$order       = new WC_Order( $order_id );
+		$qris_string = get_post_meta( $order_id, '_qris_string', true );
+
+		$variables = $this->merchant_id . $this->terminal . $qris_string . $this->merchant_key;
+		$hashing   = hash( 'sha256', $variables );
+
+		$data   = array(
+			'merchantPan'  => $this->merchant_id,
+			'terminalUser' => $this->terminal,
+			'qrValue'      => $qris_string,
+			'hashcodeKey'  => $hashing,
+		);
+		$logger = wc_get_logger();
+		// $logger->log( 'DATA TO GENERATE', wc_print_r( $data, true ) );
+		$data = wp_json_encode( $data );
+
+		$options  = array(
+			'body'        => $data,
+			'headers'     => array(
+				'Content-Type' => 'application/json',
+			),
+			'data_format' => 'body',
+		);
+		$response = wp_remote_post( $this->api_qris_status, $options );
+		$response = wp_remote_retrieve_body( $response );
+
+		$data = json_decode( $response );
+		// $logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
+		return $data->status;
 
 	}
 }
