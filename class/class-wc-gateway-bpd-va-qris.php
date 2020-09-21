@@ -57,6 +57,8 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'admin_print_scripts-woocommerce_page_wc-settings', array( &$this, 'bpd_admin_scripts' ) );
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
+		// Callback.
+		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
 
 		// Customer emails.
 	}
@@ -214,7 +216,10 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 			// Update order note with payment code.
 			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $qris_string . '</b>' );
+
 			// Save qr_string and expired date in post meta.
+			add_post_meta( $order_id, '_nmid', $qris->nmid, true );
+			add_post_meta( $order_id, '_merchant_name', $qris->merchantName, true );
 			add_post_meta( $order_id, '_qris_string', $qris->qrValue, true );
 			add_post_meta( $order_id, '_qris_expired', $qris->expiredDate, true );
 
@@ -234,6 +239,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 * Generate request to the API
 	 *
 	 * @param int $order_id
+	 * @return json
 	 */
 	public function generate_request( $order_id ) {
 		global $woocommerce;
@@ -278,9 +284,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
 		}
-		echo '<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=' . $qris_string . '" style="margin:0 auto" />';
-		echo '<h3>' . wc_price( $order->get_total() ) . '</h3>';
-		echo 'Bayar sebelum: ' . $qris_expired;
+		$this->show_qris( $order_id );
 		echo '</div>';
 
 	}
@@ -289,6 +293,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 * Generate QRIS
 	 *
 	 * @param int $order_id, $record_id
+	 * @return array
 	 */
 	public function generate_qris( $order_id, $record_id ) {
 		$variables = $this->merchant_id . $this->terminal . $this->instansi . $order_id . $this->merchant_key;
@@ -320,5 +325,29 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$data = json_decode( $response );
 		$logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
 		return $data;
+	}
+
+	/**
+	 * Show QR Code
+	 *
+	 * @param int @order_id
+	 * @return string
+	 */
+	public function show_qris( $order_id ) {
+		global $woocommerce;
+		$order         = new WC_Order( $order_id );
+		$merchant_name = get_post_meta( $order_id, '_merchant_name', true );
+		$nmid          = get_post_meta( $order_id, '_nmid', true );
+		$qris_string   = get_post_meta( $order_id, '_qris_string', true );
+		$qris_expired  = get_post_meta( $order_id, '_qris_expired', true );
+
+		echo '<div style="text-align:center;margin-bottom:50px">';
+		echo '<strong>' . $merchant_name . '</strong><br/>';
+		echo '<strong>' . $nmid . '</strong><br/>';
+		echo '<strong>' . $this->terminal . '</strong>';
+		echo '<img src=https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=' . $qris_string . ' style="margin:0 auto" />';
+		echo '<h4>' . wc_price( $order->get_total() ) . '</h4>';
+		echo 'Expired: ' . $qris_expired;
+
 	}
 }
