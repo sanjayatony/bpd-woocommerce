@@ -57,6 +57,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		// Actions.
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'admin_print_scripts-woocommerce_page_wc-settings', array( &$this, 'bpd_admin_scripts' ) );
+		add_action( 'wp_enqueue_scripts', array( &$this, 'bpd_scripts' ) );
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 		// Callback.
 		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
@@ -195,6 +196,13 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	 */
 	public function bpd_admin_scripts() {
 		wp_enqueue_script( 'bpd-admin-js', plugin_dir_url( __FILE__ ) . '../js/admin.js', array( 'jquery' ), '0.1', true );
+	}
+
+	/**
+	 * Add JS to front page
+	 */
+	public function bpd_scripts() {
+		wp_enqueue_script( 'bpd-js', plugin_dir_url( __FILE__ ) . '../js/bpd.js', array( 'jquery' ), '0.1', true );
 	}
 
 	/**
@@ -349,9 +357,21 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 			Status: <span id="qris-status"><?php echo $this->qris_status( $order_id ); ?></span>
 
 			<div class="check-status-qris" style="margin-top:10px">
-				<button id="check-qris-status">Check Status</button>
+				<button id="check-qris-statuse" onClick="history.go(0);">Check Status</button>
 			</div>
 		</div>
+
+		<!-- <script>
+		(function ($) {
+			$(document).ready(function () {
+				$("#check-qris-status").click(function (e) {
+					e.preventDefault();
+					$(this).html("Checking...");
+				});
+			});
+		})(jQuery);
+
+		</script> -->
 		<?php
 
 	}
