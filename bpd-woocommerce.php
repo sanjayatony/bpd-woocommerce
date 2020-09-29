@@ -10,7 +10,7 @@
  * Init.
  */
 function bpd_gateway_init() {
-	include 'class/class-wc-gateway-bpd-va-qris.php';
+	include 'class/class-wc-gateway-bpd-va.php';
 	include 'class/class-wc-gateway-bpd-qris.php';
 }
 add_action( 'plugins_loaded', 'bpd_gateway_init' );
@@ -19,7 +19,7 @@ add_action( 'plugins_loaded', 'bpd_gateway_init' );
  * Add method to WooCommerce
  */
 function add_bpd_payment_gateway( $methods ) {
-	$methods[] = 'WC_Gateway_BPD_VA_QRIS';
+	$methods[] = 'WC_Gateway_BPD_VA';
 	$methods[] = 'WC_Gateway_BPD_QRIS';
 	return $methods;
 }
