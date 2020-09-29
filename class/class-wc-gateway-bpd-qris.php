@@ -53,10 +53,16 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		// Actions.
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'admin_print_scripts-woocommerce_page_wc-settings', array( &$this, 'bpd_admin_scripts' ) );
-		add_action( 'wp_enqueue_scripts', array( &$this, 'bpd_scripts' ) );
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 		// Callback.
 		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
+
+		if ( ! wp_next_scheduled( 'qris_bulk_check_job ' ) ) {
+				wp_schedule_event( time(), 'hourly', 'qris_bulk_check_job' );
+		}
+		add_action( 'qris_bulk_check_job', array( $this, 'qris_bulk_check' ) );
+		add_action( 'woocommerce_admin_order_item_headers', array( $this, 'qris_on_admin' ) );
+		add_action( 'current_screen', array( $this, 'add_qris_button_bulk_check' ), 2 );
 
 		// Customer emails.
 	}
@@ -167,13 +173,6 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 	}
 
 	/**
-	 * Add JS to front page
-	 */
-	public function bpd_scripts() {
-		wp_enqueue_script( 'bpd-js', plugin_dir_url( __FILE__ ) . '../js/bpd.js', array( 'jquery' ), '0.1', true );
-	}
-
-	/**
 	 * Process the payment and return the result
 	 *
 	 * @param int $order_id
@@ -183,22 +182,39 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		global $woocommerce, $wpdb;
 		$order    = new WC_ORDER( $order_id );
 		$response = $this->generate_request( $order_id );
-		$logger   = wc_get_logger();
-		$logger->log( 'response generate', wc_print_r( $response, true ) );
 
-		if ( '00' === $response->code ) {
-			// Get QR string
-			$qris = $this->generate_qris( $order_id, $response->data[0]->recordId );
+		$logger = wc_get_logger();
+		$logger->log( 'response generate', wc_print_r( $response, true ) );
+		$logger->log( 'N responses', sizeof( $response ) );
+
+		if ( sizeof( $response ) > 0 ) {
 			// Update order status.
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 			// Update order note with payment code.
-			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $qris_string . '</b>' );
+			$order->add_order_note( 'Your ' . $this->method_title . ' QRIS is ' . $this->show_qris( $order_id ) );
+			$n_qris = 1;
+			if ( sizeof( $response ) == 1 ) {
+				add_post_meta( $order_id, '_nmid' . $n_qris, $response->nmid, true );
+				add_post_meta( $order_id, '_merchant_name' . $n_qris, $response->merchantName, true );
+				add_post_meta( $order_id, '_qris_string' . $n_qris, $response->qrValue, true );
+				add_post_meta( $order_id, '_qris_expired' . $n_qris, $response->expiredDate, true );
+				add_post_meta( $order_id, '_amount' . $n_qris, $response->amount, true );
+				add_post_meta( $order_id, '_total_amount' . $n_qris, $response->totalAmount, true );
+				add_post_meta( $order_id, '_n_qris', $n_qris, true );
+			} else {
+				foreach ( $response as $qris ) {
+					add_post_meta( $order_id, '_nmid' . $n_qris, $qris->nmid, true );
+					add_post_meta( $order_id, '_merchant_name' . $n_qris, $qris->merchantName, true );
+					add_post_meta( $order_id, '_qris_string' . $n_qris, $qris->qrValue, true );
+					add_post_meta( $order_id, '_qris_expired' . $n_qris, $qris->expiredDate, true );
+					add_post_meta( $order_id, '_amount' . $n_qris, $qris->amount, true );
+					add_post_meta( $order_id, '_total_amount' . $n_qris, $qris->totalAmount, true );
+					$n_qris++;
+				}
+				add_post_meta( $order_id, '_n_qris', $n_qris - 1, true );
 
-			// Save qr_string and expired date in post meta.
-			add_post_meta( $order_id, '_nmid', $qris->nmid, true );
-			add_post_meta( $order_id, '_merchant_name', $qris->merchantName, true );
-			add_post_meta( $order_id, '_qris_string', $qris->qrValue, true );
-			add_post_meta( $order_id, '_qris_expired', $qris->expiredDate, true );
+			}
+			add_post_meta( $order_id, '_check_payment', '0', true );
 
 			return array(
 				'result'   => 'success',
@@ -209,7 +225,6 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 			return;
 
 		}
-
 	}
 
 	/**
@@ -222,63 +237,15 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		global $woocommerce;
 		$order = new WC_Order( $order_id );
 
-		$args   = array(
-			'username'  => $this->username,
-			'password'  => $this->password,
-			'noid'      => $order->get_order_number(),
-			'nama'      => $order->billing_first_name . ' ' . $order->billing_last_name,
-			'tagihan'   => round( $order->get_total(), 0 ),
-			'instansi'  => $this->instansi,
-			'ket_1_val' => $order->get_billing_address_1(),
-			'ket_2_val' => $this->jenis_transaksi,
-			'ket_3_val' => $order->billing_phone,
-			'ket_4_val' => $this->keterangan,
-			'ket_5_val' => round( $order->get_total(), 0 ),
-		);
-		$logger = wc_get_logger();
-		$logger->log( 'DATA INSERT', wc_print_r( $args, true ) );
-
-		// Connect to WSDL.
-		$client   = new SoapClient( $this->api_soap_endpoint );
-		$response = $client->__soapCall( 'ws_tagihan_insert', $args );
-		$logger->log( 'INSERT RESPONSE', wc_print_r( $response, true ) );
-
-		return json_decode( $response );
-	}
-
-	/**
-	 * Output for the order received page.
-	 *
-	 * @param int $order_id.
-	 */
-	public function thankyou_page( $order_id ) {
-
-		echo '<div style="text-align:center">';
-		if ( $this->instructions ) {
-			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
-		}
-		$this->show_qris( $order_id );
-		echo '</div>';
-
-	}
-
-	/**
-	 * Generate QRIS
-	 *
-	 * @param int $order_id, $record_id
-	 * @return array
-	 */
-	public function generate_qris( $order_id, $record_id ) {
-		$variables = $this->merchant_id . $this->terminal . $this->instansi . $order_id . $this->merchant_key;
+		$variables = $this->merchant_id . $this->terminal . $order_id . $this->merchant_key;
 		$hashing   = hash( 'sha256', $variables );
 
 		$data   = array(
 			'merchantPan'  => $this->merchant_id,
 			'terminalUser' => $this->terminal,
-			'productCode'  => $this->instansi,
 			'hashcodeKey'  => $hashing,
+			'amount'       => round( $order->get_total(), 2 ),
 			'billNumber'   => (string) $order_id,
-			'recordId'     => $record_id,
 		);
 		$data   = wp_json_encode( $data );
 		$logger = wc_get_logger();
@@ -301,6 +268,22 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 	}
 
 	/**
+	 * Output for the order received page.
+	 *
+	 * @param int $order_id.
+	 */
+	public function thankyou_page( $order_id ) {
+
+		echo '<div style="text-align:center">';
+		if ( $this->instructions ) {
+			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
+		}
+		$this->show_qris( $order_id );
+		echo '</div>';
+
+	}
+
+	/**
 	 * Show QR Code
 	 *
 	 * @param int @order_id
@@ -308,39 +291,38 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 	 */
 	public function show_qris( $order_id ) {
 		global $woocommerce;
-		$order         = new WC_Order( $order_id );
-		$merchant_name = get_post_meta( $order_id, '_merchant_name', true );
-		$nmid          = get_post_meta( $order_id, '_nmid', true );
-		$qris_string   = get_post_meta( $order_id, '_qris_string', true );
-		$qris_expired  = get_post_meta( $order_id, '_qris_expired', true );
-		?>
-
-		<div style="text-align:center;margin-bottom:50px">
-			<strong><?php echo $merchant_name; ?></strong><br/>
-			<strong><?php echo $nmid; ?></strong><br/>
-			<strong><?php echo $this->terminal; ?></strong>
-			<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=<?php echo $qris_string; ?>" style="margin:0 auto" />
-			<h4><?php echo wc_price( $order->get_total() ); ?></h4>
-			Expired: <?php echo $qris_expired; ?><br />
-			Status: <span id="qris-status"><?php echo $this->qris_status( $order_id ); ?></span>
-
-			<div class="check-status-qris" style="margin-top:10px">
-				<button id="check-qris-statuse" onClick="history.go(0);">Check Status</button>
+		$order  = new WC_Order( $order_id );
+		$n_qris = get_post_meta( $order_id, '_n_qris', true );
+		echo '<div style="display:flex;align-items: center;justify-content: center;text-align:center;margin-bottom:50px">';
+		for ( $i = 1;$i <= $n_qris;$i++ ) {
+			$merchant_name = get_post_meta( $order_id, '_merchant_name' . $i, true );
+			$nmid          = get_post_meta( $order_id, '_nmid' . $i, true );
+			$qris_string   = get_post_meta( $order_id, '_qris_string' . $i, true );
+			$qris_expired  = get_post_meta( $order_id, '_qris_expired' . $i, true );
+			$amount        = get_post_meta( $order_id, '_amount' . $i, true );
+			$total_amount  = get_post_meta( $order_id, '_total_amount' . $i, true );
+			$color         = 'green';
+			$status        = $this->qris_status( $qris_string, $order_id );
+			if ( 'Belum Terbayar' === $status ) {
+				$color = 'red';
+			}
+			?>
+			<div style="margin-right: 20px">
+				<strong><?php echo $merchant_name; ?></strong><br/>
+				<strong><?php echo $nmid; ?></strong><br/>
+				<strong><?php echo $this->terminal; ?></strong><br/>
+				<img src="https://chart.googleapis.com/chart?cht=qr&chs=250x250&chl=<?php echo $qris_string; ?>" style="margin:0 auto" /><br/>
+				<?php echo wc_price( $amount ) . ' dari ' . wc_price( $total_amount ); ?><br />
+				Expired: <?php echo $qris_expired; ?><br />
+				Status: <span id="qris-status" style="padding:2px;background-color:<?php echo $color; ?>;color:white"><?php echo $status; ?></span>
+				<div class="check-status-qris" style="margin-top:10px">
+					<button id="check-qris-statuse" onClick="history.go(0);">Check Status</button>
+				</div>
 			</div>
-		</div>
+			<?php
 
-		<!-- <script>
-		(function ($) {
-			$(document).ready(function () {
-				$("#check-qris-status").click(function (e) {
-					e.preventDefault();
-					$(this).html("Checking...");
-				});
-			});
-		})(jQuery);
-
-		</script> -->
-		<?php
+		}
+		echo '</div>';
 
 	}
 
@@ -350,11 +332,7 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 	 * @param int $order_id
 	 * @return string
 	 */
-	public function qris_status( $order_id ) {
-		global $woocommerce;
-		$order       = new WC_Order( $order_id );
-		$qris_string = get_post_meta( $order_id, '_qris_string', true );
-
+	public function qris_status( $qris_string, $order_id ) {
 		$variables = $this->merchant_id . $this->terminal . $qris_string . $this->merchant_key;
 		$hashing   = hash( 'sha256', $variables );
 
@@ -380,7 +358,53 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 
 		$data = json_decode( $response );
 		// $logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
+		if ( 'Sudah Terbayar' === $data->status ) {
+			$this->complete_order( $order_id );
+		}
 		return $data->status;
 
+	}
+
+	public function complete_order( $order_id ) {
+		global $woocommerce;
+		$check = get_post_meta( $order_id, '_check_payment', true );
+		$order = new WC_ORDER( $order_id );
+		if ( '0' === $check ) {
+			$order->add_order_note( __( 'Your payment have been received', 'woocommerce' ) );
+			$order->payment_complete();
+			$order->reduce_order_stock();
+			update_post_meta( $order_id, '_check_payment', '1' );
+		}
+
+	}
+	public function qris_bulk_check() {
+		$args   = array(
+			'status' => 'on-hold',
+			'return' => 'ids',
+		);
+		$orders = $query->get_orders();
+		foreach ( $orders as $order_id ) {
+			$this->qris_status( $order_id, $order_id );
+
+		}
+
+	}
+
+	/**
+	 * Put QRIS in order detail
+	 */
+	public function qris_on_admin() {
+		$order_id = $_GET['post'];
+		$method   = get_post_meta( $order_id, '_payment_method', true );
+		if ( 'bpd-qris' === $method ) {
+			echo '<br />';
+			$this->show_qris( $order_id );
+		}
+	}
+
+	/**
+	 * Add Button to Order page
+	 */
+	public function add_qris_button_bulk_check() {
 	}
 }
