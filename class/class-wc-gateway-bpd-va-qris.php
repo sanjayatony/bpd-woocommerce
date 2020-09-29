@@ -21,8 +21,8 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$this->id                 = 'bpd-va-qris';
 		$this->icon               = '';
 		$this->has_fields         = false;
-		$this->method_title       = 'BPD VA QRIS';
-		$this->method_description = 'Pembayaran dengan QRIS';
+		$this->method_title       = 'BPD VA';
+		$this->method_description = 'Pembayaran dengan VA';
 
 		// Load the settings.
 		$this->init_form_fields();
@@ -34,25 +34,24 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$this->instructions    = $this->get_option( 'instructions' );
 		$this->environment     = $this->get_option( 'environment' );
 		$this->instansi        = $this->get_option( 'instansi' );
-		$this->terminal        = $this->get_option( 'terminal' );
+		$this->prefix_va       = $this->get_option( 'prefix_va' );
+		$this->kode_bank       = $this->get_option( 'kode_bank' );
 		$this->jenis_transaksi = $this->get_option( 'jenis_transaksi' );
 		$this->keterangan      = $this->get_option( 'keterangan' );
 		if ( 'sandbox' === $this->environment ) {
 			$this->username          = $this->get_option( 'username_sandbox' );
 			$this->password          = $this->get_option( 'password_sandbox' );
-			$this->merchant_id       = $this->get_option( 'merchant_id_sandbox' );
-			$this->merchant_key      = $this->get_option( 'merchant_key_sandbox' );
-			$this->api_qris_endpoint = 'http://36.75.213.124:7070/merchant-admin/rest/openapi/generateQrisPost';
-			$this->api_qris_status   = 'http://36.75.213.124:7070/merchant-admin/rest/openapi/getTrxByQrString';
 			$this->api_soap_endpoint = 'http://36.75.213.124:7070/ws_bpd_payment/interkoneksi/v1/ws_interkoneksi.php?wsdl';
 		} else {
 			$this->username          = $this->get_option( 'username_production' );
 			$this->password          = $this->get_option( 'password_production' );
-			$this->merchant_id       = $this->get_option( 'merchant_id_production' );
-			$this->merchant_key      = $this->get_option( 'merchant_key_production' );
-			$this->api_qris_endpoint = 'http://36.75.213.124:7070/merchant-admin/rest/openapi/generateQrisPost';
 			$this->api_soap_endpoint = 'http://36.75.213.124:7070/ws_bpd_payment/interkoneksi/v1/ws_interkoneksi.php?wsdl';
 		}
+
+		if ( ! wp_next_scheduled( 'va_bulk_check_job ' ) ) {
+				wp_schedule_event( time(), 'hourly', 'va_bulk_check_job' );
+		}
+		add_action( 'va_bulk_check_job', array( $this, 'va_bulk_check' ) );
 
 		// Actions.
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
@@ -61,6 +60,10 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 		// Callback.
 		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
+
+		// Button
+		// add_action( 'admin_notices', array( $this, 'add_va_check_bulk_button' ), 1 );
+		// add_action( 'admin_menu', array( $this, 'register_my_bpd_menu' ) );
 
 		// Customer emails.
 	}
@@ -71,56 +74,62 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	public function init_form_fields() {
 
 		$this->form_fields = array(
-			'enabled'                 => array(
+			'enabled'             => array(
 				'title'   => __( 'Enabled/Disable', 'woocommerce' ),
 				'type'    => 'checkbox',
 				'label'   => 'Enable BPD VA QRIS',
 				'default' => 'no',
 			),
-			'title'                   => array(
+			'title'               => array(
 				'title'       => __( 'Title', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'This controls the title which the user sees during checkout.', 'woocommerce' ),
 				'default'     => 'BPD VA QRIS',
 				'desc_tip'    => true,
 			),
-			'description'             => array(
+			'description'         => array(
 				'title'       => __( 'Description', 'woocommerce' ),
 				'type'        => 'textarea',
 				'description' => __( 'This controls the description which the user sees during checkout', 'woocommerce' ),
 				'default'     => '',
 				'desc_tip'    => true,
 			),
-			'instructions'            => array(
+			'instructions'        => array(
 				'title'       => __( 'Instructions', 'woocommerce' ),
 				'type'        => 'textarea',
 				'description' => __( 'This controls the instruction which the user sees in thankyou page', 'woocommerce' ),
 				'default'     => __( 'Silahkan bayar dengan QRIS ini.' ),
 				'desc_tip'    => true,
 			),
-			'instansi'                => array(
+			'instansi'            => array(
 				'title'       => __( 'Instansi', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'Enter you Instansi code.', 'woocommerce' ),
 				'default'     => '',
 			),
-			'terminal'                => array(
-				'title'       => __( 'Terminal', 'woocommerce' ),
+			'prefix_va'           => array(
+				'title'       => __( 'Previx VA', 'woocommerce' ),
 				'type'        => 'text',
-				'description' => __( 'Enter your Terminal.', 'woocommerce' ),
+				'description' => __( 'Enter your Prefix VA.', 'woocommerce' ),
 				'default'     => '',
 			),
-			'jenis_transaksi'         => array(
+			'kode_bank'           => array(
+				'title'       => __( 'Kode Bank', 'woocommerce' ),
+				'type'        => 'text',
+				'description' => __( 'Enter your Kode Bank.', 'woocommerce' ),
+				'default'     => '',
+			),
+			'jenis_transaksi'     => array(
 				'title'   => __( 'Jenis Transaksi', 'woocommerce' ),
 				'type'    => 'text',
 				'default' => '',
 			),
-			'keterangan'              => array(
+			'keterangan'          => array(
 				'title'   => __( 'Keterangan', 'woocommerce' ),
 				'type'    => 'text',
 				'default' => '',
 			),
-			'environment'             => array(
+			'environment'         => array(
 				'title'       => __( 'Environment', 'woocommerce' ),
 				'type'        => 'select',
 				'default'     => 'sandbox',
@@ -131,59 +140,31 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 				),
 				'class'       => 'bpd_environment',
 			),
-			'username_sandbox'        => array(
+			'username_sandbox'    => array(
 				'title'       => __( 'Username', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'Enter your <b>Sandbox</b> Username.', 'woocommerce' ),
 				'default'     => '',
 				'class'       => 'sandbox_settings sensitive',
 			),
-			'password_sandbox'        => array(
+			'password_sandbox'    => array(
 				'title'       => __( 'Password', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'Enter your <b>Sandbox</b> Password.', 'woocommerce' ),
 				'default'     => '',
 				'class'       => 'sandbox_settings sensitive',
 			),
-			'merchant_id_sandbox'     => array(
-				'title'       => __( 'Merchant ID', 'woocommerce' ),
-				'type'        => 'text',
-				'description' => __( 'Enter your <b>Sandbox</b> BPD Merchant ID.', 'woocommerce' ),
-				'default'     => '',
-				'class'       => 'sandbox_settings sensitive',
-			),
-			'merchant_key_sandbox'    => array(
-				'title'       => __( 'Merchant Key', 'woocommerce' ),
-				'type'        => 'text',
-				'description' => __( 'Enter your <b>Sandbox</b> BPD Authentification key', 'woocommerce' ),
-				'default'     => '',
-				'class'       => 'sandbox_settings sensitive',
-			),
-			'username_production'     => array(
+			'username_production' => array(
 				'title'       => __( 'Username', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'Enter your <b>Production</b> Username.', 'woocommerce' ),
 				'default'     => '',
 				'class'       => 'production_settings sensitive',
 			),
-			'password_production'     => array(
+			'password_production' => array(
 				'title'       => __( 'Password', 'woocommerce' ),
 				'type'        => 'text',
 				'description' => __( 'Enter your <b>Production</b> Username.', 'woocommerce' ),
-				'default'     => '',
-				'class'       => 'production_settings sensitive',
-			),
-			'merchant_id_production'  => array(
-				'title'       => __( 'Merchant ID', 'woocommerce' ),
-				'type'        => 'text',
-				'description' => __( 'Enter your <b>Production</b> BPD Merchant ID.', 'woocommerce' ),
-				'default'     => '',
-				'class'       => 'production_settings sensitive',
-			),
-			'merchant_key_production' => array(
-				'title'       => __( 'Merchant Key', 'woocommerce' ),
-				'type'        => 'text',
-				'description' => __( 'Enter your <b>Production</b> BPD Authentification key', 'woocommerce' ),
 				'default'     => '',
 				'class'       => 'production_settings sensitive',
 			),
@@ -219,18 +200,17 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$logger->log( 'response generate', wc_print_r( $response, true ) );
 
 		if ( '00' === $response->code ) {
-			// Get QR string
-			$qris = $this->generate_qris( $order_id, $response->data[0]->recordId );
 			// Update order status.
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
-			// Update order note with payment code.
-			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $qris_string . '</b>' );
 
-			// Save qr_string and expired date in post meta.
-			add_post_meta( $order_id, '_nmid', $qris->nmid, true );
-			add_post_meta( $order_id, '_merchant_name', $qris->merchantName, true );
-			add_post_meta( $order_id, '_qris_string', $qris->qrValue, true );
-			add_post_meta( $order_id, '_qris_expired', $qris->expiredDate, true );
+			// Update order note with payment code.
+			$atm     = $this->prefix_va . $this->makefive( $order_id );
+			$kliring = $this->kode_bank . $this->prefix_va . $this->makefive( $order_id );
+			$rtgs    = $this->kode_bank . $this->prefix_va . $this->makefive( $order_id );
+			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $atm . ', ' . $kliring . '. ' . $rtgs . '</b>' );
+			add_post_meta( $order_id, '_atm', $atm, true );
+			add_post_meta( $order_id, '_kliring', $kliring, true );
+			add_post_meta( $order_id, '_rtgs', $rtgs, true );
 
 			return array(
 				'result'   => 'success',
@@ -257,7 +237,7 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		$args   = array(
 			'username'  => $this->username,
 			'password'  => $this->password,
-			'noid'      => $order->get_order_number(),
+			'noid'      => $this->makefive( $order->get_order_number() ),
 			'nama'      => $order->billing_first_name . ' ' . $order->billing_last_name,
 			'tagihan'   => round( $order->get_total(), 0 ),
 			'instansi'  => $this->instansi,
@@ -279,6 +259,25 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 	}
 
 	/**
+	 * Make order number min 5 digits
+	 */
+
+	public function makefive( $order_id ) {
+		$no_digit = strlen( (string) $order_id );
+		if ( $no_digit < 5 ) {
+			$add_digit = 5 - $no_digit;
+			$digit     = '';
+			for ( $i = 1;$i <= $add_digit;$i++ ) {
+				$digit .= '0';
+			}
+			return $digit . $order_id;
+		} else {
+			return $order_id;
+		}
+
+	}
+
+	/**
 	 * Output for the order received page.
 	 *
 	 * @param int $order_id.
@@ -289,130 +288,64 @@ class WC_Gateway_BPD_VA_QRIS extends WC_Payment_gateway {
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
 		}
-		$this->show_qris( $order_id );
-		echo '</div>';
 
 	}
 
 	/**
-	 * Generate QRIS
-	 *
-	 * @param int $order_id, $record_id
-	 * @return array
-	 */
-	public function generate_qris( $order_id, $record_id ) {
-		$variables = $this->merchant_id . $this->terminal . $this->instansi . $order_id . $this->merchant_key;
-		$hashing   = hash( 'sha256', $variables );
-
-		$data   = array(
-			'merchantPan'  => $this->merchant_id,
-			'terminalUser' => $this->terminal,
-			'productCode'  => $this->instansi,
-			'hashcodeKey'  => $hashing,
-			'billNumber'   => (string) $order_id,
-			'recordId'     => $record_id,
-		);
-		$data   = wp_json_encode( $data );
-		$logger = wc_get_logger();
-		$logger->log( 'DATA TO GENERATE', wc_print_r( $data, true ) );
-
-		$options = array(
-			'body'        => $data,
-			'headers'     => array(
-				'Content-Type' => 'application/json',
-			),
-			'data_format' => 'body',
-		);
-
-		$response = wp_remote_post( $this->api_qris_endpoint, $options );
-		$response = wp_remote_retrieve_body( $response );
-
-		$data = json_decode( $response );
-		$logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
-		return $data;
-	}
-
-	/**
-	 * Show QR Code
-	 *
-	 * @param int @order_id
-	 * @return string
-	 */
-	public function show_qris( $order_id ) {
-		global $woocommerce;
-		$order         = new WC_Order( $order_id );
-		$merchant_name = get_post_meta( $order_id, '_merchant_name', true );
-		$nmid          = get_post_meta( $order_id, '_nmid', true );
-		$qris_string   = get_post_meta( $order_id, '_qris_string', true );
-		$qris_expired  = get_post_meta( $order_id, '_qris_expired', true );
-		?>
-
-		<div style="text-align:center;margin-bottom:50px">
-			<strong><?php echo $merchant_name; ?></strong><br/>
-			<strong><?php echo $nmid; ?></strong><br/>
-			<strong><?php echo $this->terminal; ?></strong>
-			<img src="https://chart.googleapis.com/chart?cht=qr&chs=300x300&chl=<?php echo $qris_string; ?>" style="margin:0 auto" />
-			<h4><?php echo wc_price( $order->get_total() ); ?></h4>
-			Expired: <?php echo $qris_expired; ?><br />
-			Status: <span id="qris-status"><?php echo $this->qris_status( $order_id ); ?></span>
-
-			<div class="check-status-qris" style="margin-top:10px">
-				<button id="check-qris-statuse" onClick="history.go(0);">Check Status</button>
-			</div>
-		</div>
-
-		<!-- <script>
-		(function ($) {
-			$(document).ready(function () {
-				$("#check-qris-status").click(function (e) {
-					e.preventDefault();
-					$(this).html("Checking...");
-				});
-			});
-		})(jQuery);
-
-		</script> -->
-		<?php
-
-	}
-
-	/**
-	 * GET QRIS Status
+	 * GET VA Status
 	 *
 	 * @param int $order_id
 	 * @return string
 	 */
-	public function qris_status( $order_id ) {
+	public function va_status( $order_id ) {
+
 		global $woocommerce;
-		$order       = new WC_Order( $order_id );
-		$qris_string = get_post_meta( $order_id, '_qris_string', true );
+		$order = new WC_Order( $order_id );
 
-		$variables = $this->merchant_id . $this->terminal . $qris_string . $this->merchant_key;
-		$hashing   = hash( 'sha256', $variables );
-
-		$data   = array(
-			'merchantPan'  => $this->merchant_id,
-			'terminalUser' => $this->terminal,
-			'qrValue'      => $qris_string,
-			'hashcodeKey'  => $hashing,
+		$args = array(
+			'username' => $this->username,
+			'password' => $this->password,
+			'instansi' => $this->instansi,
+			'noid'     => $order->get_order_number(),
 		);
-		$logger = wc_get_logger();
-		// $logger->log( 'DATA TO GENERATE', wc_print_r( $data, true ) );
-		$data = wp_json_encode( $data );
 
-		$options  = array(
-			'body'        => $data,
-			'headers'     => array(
-				'Content-Type' => 'application/json',
-			),
-			'data_format' => 'body',
+		// Connect to WSDL.
+		$client   = new SoapClient( $this->api_soap_endpoint );
+		$response = $client->__soapCall( 'ws_inquiry_tagihan', $args );
+		$response = json_decode( $response );
+		if ( '1' === $response->data[0]->sts_bayar ) {
+			$this->complete_order( $order_id );
+		}
+		return $response->data[0]->sts_bayar;
+
+	}
+
+	/**
+	 * Callback Handler
+	 */
+	public function complete_order( $order_id ) {
+		global $woocommerce;
+		$check = get_post_meta( $order_id, '_check_payment', true );
+		$order = new WC_ORDER( $order_id );
+		if ( '0' === $check ) {
+			$order->add_order_note( __( 'Your payment have been received', 'woocommerce' ) );
+			$order->payment_complete();
+			$order->reduce_order_stock();
+			update_post_meta( $order_id, '_check_payment', '1' );
+		}
+
+	}
+
+	public function va_bulk_check() {
+		$args   = array(
+			'status' => 'on-hold',
+			'return' => 'ids',
 		);
-		$response = wp_remote_post( $this->api_qris_status, $options );
-		$response = wp_remote_retrieve_body( $response );
+		$orders = $query->get_orders();
+		foreach ( $orders as $order_id ) {
+			$this->va_status( $order_id );
 
-		$data = json_decode( $response );
-		// $logger->log( 'QRIS RESPONSE', wc_print_r( $data, true ) );
-		return $data->status;
+		}
 
 	}
 }
