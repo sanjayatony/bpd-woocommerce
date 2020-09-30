@@ -48,11 +48,6 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 			$this->api_soap_endpoint = 'http://36.75.213.124:7070/ws_bpd_payment/interkoneksi/v1/ws_interkoneksi.php?wsdl';
 		}
 
-		if ( ! wp_next_scheduled( 'va_bulk_check_job ' ) ) {
-				wp_schedule_event( time(), 'hourly', 'va_bulk_check_job' );
-		}
-		add_action( 'va_bulk_check_job', array( $this, 'va_bulk_check' ) );
-
 		// Actions.
 		add_action( 'woocommerce_update_options_payment_gateways_' . $this->id, array( $this, 'process_admin_options' ) );
 		add_action( 'admin_print_scripts-woocommerce_page_wc-settings', array( &$this, 'bpd_admin_scripts' ) );
@@ -60,6 +55,7 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 		add_action( 'woocommerce_thankyou_' . $this->id, array( $this, 'thankyou_page' ) );
 		// Callback.
 		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
+		add_action( 'woocommerce_order_details_after_order_table', array( $this, 'show_va_my_account' ) );
 
 		// Button
 		// add_action( 'admin_notices', array( $this, 'add_va_check_bulk_button' ), 1 );
@@ -204,13 +200,15 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 			$order->update_status( 'on-hold', 'Awaiting payment via ' . $this->method_title );
 
 			// Update order note with payment code.
-			$atm     = $this->prefix_va . $this->makefive( $order_id );
-			$kliring = $this->kode_bank . $this->prefix_va . $this->makefive( $order_id );
-			$rtgs    = $this->kode_bank . $this->prefix_va . $this->makefive( $order_id );
+			$atm     = $this->prefix_va . '-' . $this->makefive( $order_id );
+			$kliring = $this->kode_bank . '-' . $this->prefix_va . '-' . $this->makefive( $order_id );
+			$rtgs    = $this->kode_bank . '-' . $this->prefix_va . '-' . $this->makefive( $order_id );
 			$order->add_order_note( 'Your ' . $this->method_title . ' code is <b>' . $atm . ', ' . $kliring . ', ' . $rtgs . '</b>' );
 			add_post_meta( $order_id, '_atm', $atm, true );
 			add_post_meta( $order_id, '_kliring', $kliring, true );
 			add_post_meta( $order_id, '_rtgs', $rtgs, true );
+
+			add_post_meta( $order_id, '_check_payment', '0', true );
 
 			return array(
 				'result'   => 'success',
@@ -261,7 +259,6 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 	/**
 	 * Make order number min 5 digits
 	 */
-
 	public function makefive( $order_id ) {
 		$no_digit = strlen( (string) $order_id );
 		if ( $no_digit < 5 ) {
@@ -283,12 +280,38 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 	 * @param int $order_id.
 	 */
 	public function thankyou_page( $order_id ) {
-
-		echo '<div style="text-align:center">';
 		if ( $this->instructions ) {
 			echo wp_kses_post( wpautop( wptexturize( wp_kses_post( $this->instructions ) ) ) );
 		}
+		$this->show_va( $order_id );
 
+	}
+
+	/**
+	 * Show VA number
+	 */
+	public function show_va( $order_id ) {
+		?>
+	  <table style="border: 2px solid #641E16">
+			<tr id="channelbankbali">
+				<td  style="background:#F9EBEA">A. NO. VA :: CHANNEL BANK BPD BALI</td>
+				<td style="background:#F9EBEA"><strong><?php echo $this->makefive( $order_id ); ?></strong></td>
+			</tr>
+			<tr id="atmbanklain">
+				<td  style="background:#F9EBEA">B. NO. VA :: ATM BANK LAIN</td>
+				<td style="background:#F9EBEA"><strong><?php echo get_post_meta( $order_id, '_atm', true ); ?></strong></td>
+			</tr>
+<tr id="ebankingbanklain">
+	<td  style="background:#F9EBEA">C. NO. VA :: E-BANKING BANK LAIN</td>
+	<td style="background:#F9EBEA"><strong><?php echo get_post_meta( $order_id, '_atm', true ); ?></strong></td>
+  </tr>
+	  <tr id="sknrtgs">
+		<td  style="background:#F9EBEA">D. NO. VA :: SKNBI / KLIRING / RTGS</td>
+		<td style="background:#F9EBEA"><strong><?php echo get_post_meta( $order_id, '_rtgs', true ); ?></strong></td>
+	  </tr>
+
+	  </table>
+		<?php
 	}
 
 	/**
@@ -306,7 +329,7 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 			'username' => $this->username,
 			'password' => $this->password,
 			'instansi' => $this->instansi,
-			'noid'     => $order->get_order_number(),
+			'noid'     => $this->makefive( $order->get_order_number() ),
 		);
 
 		// Connect to WSDL.
@@ -330,22 +353,46 @@ class WC_Gateway_BPD_VA extends WC_Payment_gateway {
 		if ( '0' === $check ) {
 			$order->add_order_note( __( 'Your payment have been received', 'woocommerce' ) );
 			$order->payment_complete();
-			$order->reduce_order_stock();
+			wc_reduce_stock_levels( $order_id );
 			update_post_meta( $order_id, '_check_payment', '1' );
 		}
 
 	}
 
-	public function va_bulk_check() {
+	/**
+	 * Check status
+	 */
+
+	public function bulk_check() {
 		$args   = array(
 			'status' => 'on-hold',
 			'return' => 'ids',
 		);
-		$orders = $query->get_orders();
+		$orders = wc_get_orders( $args );
 		foreach ( $orders as $order_id ) {
 			$this->va_status( $order_id );
 
 		}
 
+	}
+
+	/**
+	 * add instrctions and payment code in email
+	 */
+	public function email_instructions( $order, $sent_to_admin, $plain_text = false ) {
+		if ( $this->instructions && ! $sent_to_admin && $this->id === $order->payment_method && $order->has_status( 'on-hold' ) ) {
+			echo '<div style="text-align:center">';
+			echo esc_html( wpautop( wptexturize( $this->instructions ) ) );
+			echo '<p>' . $this->show_va( $order->get_order_number() ) . '</p>';
+			echo '</div>';
+		}
+	}
+
+	public function show_va_my_account( $order_id ) {
+		$order_id = $_GET['view-order'];
+		$method   = get_post_meta( $order_id, '_payment_method', true );
+		if ( 'bpd-va' === $method ) {
+			$this->show_va( $order_id );
+		}
 	}
 }

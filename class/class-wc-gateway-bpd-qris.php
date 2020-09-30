@@ -57,12 +57,8 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		// Callback.
 		add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'callback_handler' ) );
 
-		if ( ! wp_next_scheduled( 'qris_bulk_check_job ' ) ) {
-				wp_schedule_event( time(), 'hourly', 'qris_bulk_check_job' );
-		}
-		add_action( 'qris_bulk_check_job', array( $this, 'qris_bulk_check' ) );
 		add_action( 'woocommerce_admin_order_item_headers', array( $this, 'qris_on_admin' ) );
-		add_action( 'current_screen', array( $this, 'add_qris_button_bulk_check' ), 2 );
+		add_action( 'woocommerce_order_details_after_order_table', array( $this, 'show_qris_my_account' ) );
 
 		// Customer emails.
 	}
@@ -372,22 +368,21 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		if ( '0' === $check ) {
 			$order->add_order_note( __( 'Your payment have been received', 'woocommerce' ) );
 			$order->payment_complete();
-			$order->reduce_order_stock();
+			wc_reduce_stock_levels( $order_id );
 			update_post_meta( $order_id, '_check_payment', '1' );
 		}
 
 	}
-	public function qris_bulk_check() {
-		$args   = array(
+	public function bulk_check() {
+		$args       = array(
 			'status' => 'on-hold',
 			'return' => 'ids',
 		);
-		$orders = $query->get_orders();
+			$orders = wc_get_orders( $args );
 		foreach ( $orders as $order_id ) {
-			$this->qris_status( $order_id, $order_id );
-
+			$qris_string = get_post_meta( $order_id, '_qris_string', true );
+			$this->qris_status( $qris_string, $order_id );
 		}
-
 	}
 
 	/**
@@ -402,9 +397,12 @@ class WC_Gateway_BPD_QRIS extends WC_Payment_gateway {
 		}
 	}
 
-	/**
-	 * Add Button to Order page
-	 */
-	public function add_qris_button_bulk_check() {
+	public function show_qris_my_account( $order_id ) {
+		$method = get_post_meta( $order_id, '_payment_method', true );
+		if ( 'bpd-qris' === $method ) {
+			$this->show_qris( $order_id );
+		}
 	}
+
+
 }
