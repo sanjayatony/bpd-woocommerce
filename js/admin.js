@@ -8,6 +8,7 @@
   }
 
   $(document).ready(function () {
+    // Admin
     $("select.bpd_environment").on("change", function (e, data) {
       sensitiveOptions();
     });
